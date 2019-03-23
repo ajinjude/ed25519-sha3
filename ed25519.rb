@@ -1,4 +1,3 @@
-require 'openssl'
 require 'digest/sha3' # gem install digest-sha3
 # Port of http://ed25519.cr.yp.to/python/ed25519.py
 
