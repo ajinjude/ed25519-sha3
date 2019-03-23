@@ -31,90 +31,94 @@ class Ed25519
       x = @q - x if x.odd?
       x
     end
-  def edwards(_P, _Q)
-    x1 = _P[0]
-    y1 = _P[1]
-    x2 = _Q[0]
-    y2 = _Q[1]
-    x3 = (x1 * y2 + x2 * y1) * inv(1 + @d * x1 * x2 * y1 * y2)
-    y3 = (y1 * y2 + x1 * x2) * inv(1 - @d * x1 * x2 * y1 * y2)
-    [x3 % @q, y3 % @q]
-  end
 
-  def scalarmult(_P, e)
-    return [0, 1] if e.zero?
+    def edwards(_P, _Q)
+      x1 = _P[0]
+      y1 = _P[1]
+      x2 = _Q[0]
+      y2 = _Q[1]
+      x3 = (x1 * y2 + x2 * y1) * inv(1 + @d * x1 * x2 * y1 * y2)
+      y3 = (y1 * y2 + x1 * x2) * inv(1 - @d * x1 * x2 * y1 * y2)
+      [x3 % @q, y3 % @q]
+    end
 
-    _Q = scalarmult(_P, e / 2)
-    _Q = edwards(_Q, _Q)
-    _Q = edwards(_Q, _P) if e & 1 != 0
-    _Q
-  end
+    def scalarmult(_P, e)
+      return [0, 1] if e.zero?
 
-  def encodeint(y)
-    bits = (0...@b).map{ |i| (y >> i) & 1}
-    (0...@b/8).map{ |i|(0...8).map { |j| bits[i * 8 + j] << j}.sum.chr }.join
-  end
+      _Q = scalarmult(_P, e / 2)
+      _Q = edwards(_Q, _Q)
+      _Q = edwards(_Q, _P) if e & 1 != 0
+      _Q
+    end
 
-  def encodepoint(_P)
-    x = _P[0]
-    y = _P[1]
-    bits = (0...@b - 1).map { |i| (y >> i) & 1 }.concat([x & 1])
-    (0...@b / 8).map { |i| (0...8).map { |j| bits[i * 8 + j] << j }.sum.chr }.join
-  end
+    def encodeint(y)
+      bits = (0...@b).map{ |i| (y >> i) & 1}
+      (0...@b/8).map{ |i|(0...8).map { |j| bits[i * 8 + j] << j}.sum.chr }.join
+    end
 
-  def bit(h, i)
-    ((h[i / 8]).ord >> (i % 8)) & 1
-  end
+    def encodepoint(_P)
+      x = _P[0]
+      y = _P[1]
+      bits = (0...@b - 1).map { |i| (y >> i) & 1 }.concat([x & 1])
+      (0...@b / 8).map { |i| (0...8).map { |j| bits[i * 8 + j] << j }.sum.chr }.join
+    end
 
-  def publickey(sk)
-    h = H(sk)
-    a = 2**(@b - 2) + (3...@b - 2).map { |i| 2**i * bit(h, i) }.sum
-    _A = scalarmult(@B, a)
-    encodepoint(_A)
-  end
-  def Hint(m)
-    h = H(m)
-    (0...2 * @b).map { |i| 2**i * bit(h, i) }.sum
-  end
-  def signature(m, sk, pk)
-    h = H(sk)
-    a = 2**(@b - 2) + (3...@b - 2).map { |i| 2**i * bit(h, i) }.sum
-    r = Hint((@b / 8...@b / 4).map { |i| h[i] }.join + m)
-    _R = scalarmult(@B, r)
-    _S = (r + Hint(encodepoint(_R) + pk + m) * a) % @l
-    encodepoint(_R) + encodeint(_S)
-  end
-  def isoncurve(_P)
-    x = _P[0]
-    y = _P[1]
-    ((-x * x + y * y - 1 - @d * x * x * y * y) % @q).zero?
-  end
+    def bit(h, i)
+      ((h[i / 8]).ord >> (i % 8)) & 1
+    end
 
-  def decodeint(s)
-    (0...@b).map { |i| 2**i * bit(s, i) }.sum
+    def publickey(sk)
+      h = H(sk)
+      a = 2**(@b - 2) + (3...@b - 2).map { |i| 2**i * bit(h, i) }.sum
+      _A = scalarmult(@B, a)
+      encodepoint(_A)
+    end
+
+    def Hint(m)
+      h = H(m)
+      (0...2 * @b).map { |i| 2**i * bit(h, i) }.sum
+    end
+
+    def signature(m, sk, pk)
+      h = H(sk)
+      a = 2**(@b - 2) + (3...@b - 2).map { |i| 2**i * bit(h, i) }.sum
+      r = Hint((@b / 8...@b / 4).map { |i| h[i] }.join + m)
+      _R = scalarmult(@B, r)
+      _S = (r + Hint(encodepoint(_R) + pk + m) * a) % @l
+      encodepoint(_R) + encodeint(_S)
+    end
+
+    def isoncurve(_P)
+      x = _P[0]
+      y = _P[1]
+      ((-x * x + y * y - 1 - @d * x * x * y * y) % @q).zero?
+    end
+
+    def decodeint(s)
+      (0...@b).map { |i| 2**i * bit(s, i) }.sum
+    end
+
+    def decodepoint(s)
+      y = (0...@b - 1).map { |i| 2**i * bit(s, i) }.sum
+      x = xrecover(y)
+      x = @q - x if x & 1 != bit(s, @b - 1)
+      _P = [x, y]
+      raise ArgumentError, 'decoding point that is not on curve' unless isoncurve(_P)
+
+      _P
+    end
+
+    def checkvalid(s,m,pk)
+      raise ArgumentError, 'signature length is wrong' if s.length != @b / 4
+      raise ArgumentError, 'public-key length is wrong' if pk.length != @b / 8
+
+      _R = decodepoint(s[0..@b / 8])
+      _A = decodepoint(pk)
+      _S = decodeint(s[@b / 8..@b / 4])
+      h = Hint(encodepoint(_R) + pk + m)
+      raise 'Signature does not pass verifiction' if scalarmult(@B, _S) != edwards(_R, scalarmult(_A, h))
+    end
   end
-
-  def decodepoint(s)
-    y = (0...@b - 1).map { |i| 2**i * bit(s, i) }.sum
-    x = xrecover(y)
-    x = @q - x if x & 1 != bit(s, @b - 1)
-    _P = [x, y]
-    raise ArgumentError, 'decoding point that is not on curve' unless isoncurve(_P)
-
-    _P
-  end
-
-  def checkvalid(s,m,pk)
-    raise ArgumentError, 'signature length is wrong' if s.length != @b / 4
-    raise ArgumentError, 'public-key length is wrong' if pk.length != @b / 8
-
-    _R = decodepoint(s[0..@b / 8])
-    _A = decodepoint(pk)
-    _S = decodeint(s[@b / 8..@b / 4])
-    h = Hint(encodepoint(_R) + pk + m)
-    raise 'Signature does not pass verifiction' if scalarmult(@B, _S) != edwards(_R, scalarmult(_A, h))
-  end
-end
 
   @d = -121_665 * inv(121_666)
   @I = expmod(2, (@q - 1) / 4, @q)
